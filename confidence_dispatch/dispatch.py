@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import wave
 from pathlib import Path
@@ -134,6 +135,23 @@ def save_wav_clip(audio: np.ndarray, output_path: Path, sample_rate: int = 16000
         handle.writeframes(pcm16.tobytes())
 
 
+def dispatch_with_openai(clip_path: Path, language: str | None, model_name: str) -> str:
+    from openai import OpenAI
+
+    client = OpenAI()
+    with open(clip_path, "rb") as handle:
+        response = client.audio.transcriptions.create(
+            model=model_name,
+            file=handle,
+            language=language,
+            temperature=0,
+        )
+    text = getattr(response, "text", None)
+    if text is None and isinstance(response, dict):
+        text = response.get("text")
+    return normalize_text(text or "")
+
+
 def build_dispatched_transcript(analysis: dict, dispatched_spans: Sequence[dict]) -> str:
     by_segment: Dict[int, List[dict]] = {}
     for span in dispatched_spans:
@@ -159,4 +177,67 @@ def build_dispatched_transcript(analysis: dict, dispatched_spans: Sequence[dict]
         parts.append("".join(segment_parts))
 
     return normalize_text(" ".join(parts))
+
+
+def dispatch_analysis(
+    analysis: dict,
+    *,
+    threshold: float,
+    merge_gap_sec: float = 0.15,
+    context_sec: float = 0.2,
+    min_tokens: int = 1,
+    run_openai: bool = False,
+    openai_model: str = "whisper-1",
+) -> dict:
+    audio_path = Path(analysis["audio"]).resolve()
+    spans = collect_low_confidence_spans(
+        analysis,
+        threshold=threshold,
+        merge_gap_sec=merge_gap_sec,
+        context_sec=context_sec,
+        min_tokens=min_tokens,
+    )
+
+    report = {
+        "audio": str(audio_path),
+        "threshold": threshold,
+        "merge_gap_sec": merge_gap_sec,
+        "context_sec": context_sec,
+        "min_tokens": min_tokens,
+        "run_openai": run_openai,
+        "openai_model": openai_model,
+        "local_transcript": normalize_text(analysis.get("text", "")),
+        "dispatch_spans": spans,
+    }
+
+    if not run_openai:
+        report["dispatched_transcript"] = report["local_transcript"]
+        return report
+
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY is required when run_openai=True")
+
+    from tempfile import TemporaryDirectory
+
+    dispatched: List[dict] = []
+    with TemporaryDirectory(prefix="dispatch-clips-") as temp_dir:
+        temp_root = Path(temp_dir)
+        for index, span in enumerate(spans):
+            clip_audio = extract_audio_clip(
+                audio_path,
+                span["dispatch_start"],
+                span["dispatch_end"],
+            )
+            clip_path = temp_root / f"span-{index:03d}.wav"
+            save_wav_clip(clip_audio, clip_path)
+            remote_text = dispatch_with_openai(
+                clip_path,
+                analysis.get("language"),
+                openai_model,
+            )
+            dispatched.append({**span, "remote_text": remote_text})
+
+    report["dispatch_spans"] = dispatched
+    report["dispatched_transcript"] = build_dispatched_transcript(analysis, dispatched)
+    return report
 

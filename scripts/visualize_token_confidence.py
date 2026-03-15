@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from confidence_dispatch.analyze import analyze_audio
 from kernels.vendor_whisper import import_vendor_whisper, whisper_cache_dir
 
 
@@ -480,20 +481,7 @@ def main() -> int:
     audio = whisper.load_audio(str(audio_path))
     duration_sec = len(audio) / 16000.0
 
-    result = _run_transcription(
-        whisper=whisper,
-        audio_path=audio_path,
-        model_name=args.model,
-        device="cpu",
-    )
-    result["device"] = "cpu"
-    result["audio"] = str(audio_path)
-    result["duration_sec"] = round(duration_sec, 3)
-    result["confidence_definition"] = (
-        "Per-token confidence is the softmax probability assigned to each emitted text token "
-        "during Whisper's alignment pass over the final transcript for that segment."
-    )
-    result["validation"] = _build_validation(result)
+    result = analyze_audio(audio_path=audio_path, model_name=args.model, device="cpu")
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -4,6 +4,8 @@ This project runs the real local `openai/whisper` model first, extracts per-toke
 
 The goal is quality improvement, not speed optimization.
 
+![Whisper token confidence visualization](docs/images/token-confidence-visualization.png)
+
 ## What It Does
 
 1. Run Whisper Tiny locally on CPU from a vendored `openai/whisper` source tree.
@@ -115,6 +117,60 @@ python scripts/dispatch_low_confidence.py \
 Current default fallback model:
 
 - `whisper-1`
+
+## Benchmark On LibriSpeech `test-other`
+
+Once you have extracted the archive, point the benchmark at either:
+
+- the `LibriSpeech` root directory
+- or directly at the `test-other` directory
+
+Run a small local-only sample first:
+
+```bash
+source .venv/bin/activate
+python scripts/benchmark_librispeech_dispatch.py \
+  --input /path/to/LibriSpeech \
+  --subset test-other \
+  --max-files 10 \
+  --threshold 0.6 \
+  --output results/test-other-local.json
+```
+
+That will compare:
+
+- the raw local Whisper transcript
+- the confidence-dispatch transcript
+- the LibriSpeech reference text
+
+and report average WER for both paths.
+
+To benchmark the actual OpenAI fallback path:
+
+```bash
+export OPENAI_API_KEY=...
+python scripts/benchmark_librispeech_dispatch.py \
+  --input /path/to/LibriSpeech \
+  --subset test-other \
+  --max-files 25 \
+  --threshold 0.6 \
+  --run-openai \
+  --output results/test-other-openai.json
+```
+
+Recommended workflow:
+
+- start with `--max-files 10` to check cost and behavior
+- inspect the JSON output to see which spans were dispatched
+- then increase the sample size or run the whole subset
+
+The benchmark output includes:
+
+- per-utterance local and dispatched transcripts
+- local and dispatched WER
+- number of dispatched spans
+- total dispatched audio seconds
+- local and dispatch wall-clock time
 
 ## Confidence Definition
 

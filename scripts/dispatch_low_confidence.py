@@ -5,41 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import List
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from confidence_dispatch.dispatch import (
-    build_dispatched_transcript,
-    collect_low_confidence_spans,
-    extract_audio_clip,
+    dispatch_analysis,
     load_analysis,
-    normalize_text,
-    save_wav_clip,
 )
-
-
-def _dispatch_with_openai(clip_path: Path, language: str | None, model_name: str) -> str:
-    from openai import OpenAI
-
-    client = OpenAI()
-    with open(clip_path, "rb") as handle:
-        response = client.audio.transcriptions.create(
-            model=model_name,
-            file=handle,
-            language=language,
-            temperature=0,
-        )
-    text = getattr(response, "text", None)
-    if text is None and isinstance(response, dict):
-        text = response.get("text")
-    return normalize_text(text or "")
 
 
 def main() -> int:
@@ -103,56 +79,24 @@ def main() -> int:
         print(f"Error: source audio not found: {audio_path}", file=sys.stderr)
         return 1
 
-    spans = collect_low_confidence_spans(
-        analysis,
-        threshold=args.threshold,
-        merge_gap_sec=args.merge_gap_sec,
-        context_sec=args.context_sec,
-        min_tokens=args.min_tokens,
-    )
-
-    report = {
-        "analysis_json": str(analysis_path),
-        "audio": str(audio_path),
-        "threshold": args.threshold,
-        "merge_gap_sec": args.merge_gap_sec,
-        "context_sec": args.context_sec,
-        "min_tokens": args.min_tokens,
-        "run_openai": args.run_openai,
-        "openai_model": args.openai_model,
-        "local_transcript": normalize_text(analysis.get("text", "")),
-        "dispatch_spans": spans,
-    }
-
-    if args.run_openai:
-        if not os.environ.get("OPENAI_API_KEY"):
-            print("Error: OPENAI_API_KEY is required with --run-openai", file=sys.stderr)
-            return 1
-
-        dispatched: List[dict] = []
-        with TemporaryDirectory(prefix="dispatch-clips-") as temp_dir:
-            temp_root = Path(temp_dir)
-            for index, span in enumerate(spans):
-                clip_audio = extract_audio_clip(
-                    audio_path,
-                    span["dispatch_start"],
-                    span["dispatch_end"],
-                )
-                clip_path = temp_root / f"span-{index:03d}.wav"
-                save_wav_clip(clip_audio, clip_path)
-                remote_text = _dispatch_with_openai(
-                    clip_path,
-                    analysis.get("language"),
-                    args.openai_model,
-                )
-                dispatched.append({**span, "remote_text": remote_text})
-        report["dispatch_spans"] = dispatched
-        report["dispatched_transcript"] = build_dispatched_transcript(
+    try:
+        report = dispatch_analysis(
             analysis,
-            dispatched,
+            threshold=args.threshold,
+            merge_gap_sec=args.merge_gap_sec,
+            context_sec=args.context_sec,
+            min_tokens=args.min_tokens,
+            run_openai=args.run_openai,
+            openai_model=args.openai_model,
         )
-    else:
-        report["dispatched_transcript"] = report["local_transcript"]
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    report.update(
+        {
+            "analysis_json": str(analysis_path),
+        }
+    )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with open(args.output.resolve(), "w", encoding="utf-8") as handle:

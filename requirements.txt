@@ -1,0 +1,8 @@
+# Base dependencies for local confidence analysis and dispatch.
+# Install vendored Whisper itself with: pip install -e vendor/whisper
+
+torch
+tiktoken
+numpy>=1.21.0
+openai
+pytest>=8.0.0

@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from PIL import Image, ImageDraw, ImageFont
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -70,22 +72,18 @@ def save_json(path: Path, payload: dict) -> None:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
 
 
-def render_svg_plot(
+def build_plot_spec(
     *,
-    title: str,
-    subtitle: str,
     thresholds: list[float],
     series: dict[str, list[float]],
     baseline: float,
-    y_label: str,
-    output_path: Path,
-) -> None:
+) -> dict:
     width = 1100
     height = 640
-    margin_left = 80
-    margin_right = 40
-    margin_top = 70
-    margin_bottom = 70
+    margin_left = 90
+    margin_right = 50
+    margin_top = 80
+    margin_bottom = 80
     plot_width = width - margin_left - margin_right
     plot_height = height - margin_top - margin_bottom
 
@@ -108,6 +106,47 @@ def render_svg_plot(
 
     def y_pos(value: float) -> float:
         return margin_top + plot_height * (1.0 - (value - y_min) / (y_max - y_min))
+
+    return {
+        "width": width,
+        "height": height,
+        "margin_left": margin_left,
+        "margin_right": margin_right,
+        "margin_top": margin_top,
+        "margin_bottom": margin_bottom,
+        "plot_width": plot_width,
+        "plot_height": plot_height,
+        "y_min": y_min,
+        "y_max": y_max,
+        "x_pos": x_pos,
+        "y_pos": y_pos,
+    }
+
+
+def render_svg_plot(
+    *,
+    title: str,
+    subtitle: str,
+    thresholds: list[float],
+    series: dict[str, list[float]],
+    baseline: float,
+    baseline_label: str,
+    y_label: str,
+    output_path: Path,
+) -> None:
+    spec = build_plot_spec(thresholds=thresholds, series=series, baseline=baseline)
+    width = spec["width"]
+    height = spec["height"]
+    margin_left = spec["margin_left"]
+    margin_right = spec["margin_right"]
+    margin_top = spec["margin_top"]
+    margin_bottom = spec["margin_bottom"]
+    plot_width = spec["plot_width"]
+    plot_height = spec["plot_height"]
+    y_min = spec["y_min"]
+    y_max = spec["y_max"]
+    x_pos = spec["x_pos"]
+    y_pos = spec["y_pos"]
 
     colors = {
         "1": "#2563eb",
@@ -151,11 +190,11 @@ def render_svg_plot(
         "stroke='#6b7280' stroke-width='2' stroke-dasharray='8 6' />"
     )
     svg_parts.append(
-        f"<text class='legend' x='{width - margin_right - 8}' y='{baseline_y - 8:.2f}' text-anchor='end'>local baseline</text>"
+        f"<text class='legend' x='{width - margin_right - 8}' y='{baseline_y - 8:.2f}' text-anchor='end'>{baseline_label}</text>"
     )
 
     legend_y = margin_top + 12
-    legend_x = width - margin_right - 210
+    legend_x = width - margin_right - 290
     for label, values in sorted(series.items(), key=lambda item: int(item[0])):
         points = " ".join(
             f"{x_pos(index):.2f},{y_pos(value):.2f}"
@@ -181,71 +220,127 @@ def render_svg_plot(
     output_path.write_text("".join(svg_parts), encoding="utf-8")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Sweep dispatch thresholds and prefix lengths")
-    parser.add_argument("--input", type=Path, required=True)
-    parser.add_argument("--subset", default="dev-other")
-    parser.add_argument("--max-files", type=int, default=25)
-    parser.add_argument("--thresholds", default="0.2,0.25,0.3,0.35")
-    parser.add_argument("--prefix-words", default="1,3,5")
-    parser.add_argument("--left-context-sec", type=float, default=0.5)
-    parser.add_argument("--right-context-sec", type=float, default=0.25)
-    parser.add_argument("--min-duration-sec", type=float, default=0.25)
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=REPO_ROOT / "results" / "dispatch-sweep",
+def render_png_plot(
+    *,
+    title: str,
+    subtitle: str,
+    thresholds: list[float],
+    series: dict[str, list[float]],
+    baseline: float,
+    baseline_label: str,
+    y_label: str,
+    output_path: Path,
+) -> None:
+    spec = build_plot_spec(thresholds=thresholds, series=series, baseline=baseline)
+    width = spec["width"]
+    height = spec["height"]
+    margin_left = spec["margin_left"]
+    margin_right = spec["margin_right"]
+    margin_top = spec["margin_top"]
+    margin_bottom = spec["margin_bottom"]
+    plot_width = spec["plot_width"]
+    plot_height = spec["plot_height"]
+    y_min = spec["y_min"]
+    y_max = spec["y_max"]
+    x_pos = spec["x_pos"]
+    y_pos = spec["y_pos"]
+
+    colors = {
+        "1": "#2563eb",
+        "3": "#16a34a",
+        "5": "#dc2626",
+    }
+
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    title_font = ImageFont.load_default()
+    body_font = ImageFont.load_default()
+
+    def text_size(text: str, font: ImageFont.ImageFont) -> tuple[int, int]:
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        return right - left, bottom - top
+
+    def draw_centered_text(x: float, y: float, text: str, font: ImageFont.ImageFont, fill: str) -> None:
+        w, h = text_size(text, font)
+        draw.text((x - w / 2, y - h / 2), text, font=font, fill=fill)
+
+    def draw_right_aligned_text(x: float, y: float, text: str, font: ImageFont.ImageFont, fill: str) -> None:
+        w, h = text_size(text, font)
+        draw.text((x - w, y - h / 2), text, font=font, fill=fill)
+
+    def draw_dashed_line(x1: float, y1: float, x2: float, y2: float, *, fill: str, dash: int = 8, gap: int = 6, width_px: int = 2) -> None:
+        total = x2 - x1
+        current = x1
+        while current < x2:
+            end = min(current + dash, x2)
+            draw.line((current, y1, end, y2), fill=fill, width=width_px)
+            current += dash + gap
+
+    draw.text((margin_left, 24), title, font=title_font, fill="#111111")
+    draw.text((margin_left, 46), subtitle, font=body_font, fill="#4b5563")
+
+    for step in range(6):
+        value = y_min + (y_max - y_min) * step / 5.0
+        y = y_pos(value)
+        draw.line((margin_left, y, width - margin_right, y), fill="#e5e7eb", width=1)
+        draw_right_aligned_text(margin_left - 12, y, f"{value:.3f}", body_font, "#374151")
+
+    for index, threshold in enumerate(thresholds):
+        x = x_pos(index)
+        draw.line((x, margin_top, x, height - margin_bottom), fill="#e5e7eb", width=1)
+        draw_centered_text(x, height - margin_bottom + 22, f"{threshold:.2f}", body_font, "#374151")
+
+    draw.line((margin_left, height - margin_bottom, width - margin_right, height - margin_bottom), fill="#111827", width=2)
+    draw.line((margin_left, margin_top, margin_left, height - margin_bottom), fill="#111827", width=2)
+
+    baseline_y = y_pos(baseline)
+    draw_dashed_line(
+        margin_left,
+        baseline_y,
+        width - margin_right,
+        baseline_y,
+        fill="#6b7280",
     )
-    args = parser.parse_args()
+    draw_right_aligned_text(width - margin_right - 8, baseline_y - 8, baseline_label, body_font, "#374151")
 
-    thresholds = parse_csv_floats(args.thresholds)
-    prefix_words_list = parse_csv_ints(args.prefix_words)
-    output_dir = args.output_dir.resolve()
-    runs_dir = output_dir / "runs"
-    runs_dir.mkdir(parents=True, exist_ok=True)
+    legend_y = margin_top + 12
+    legend_x = width - margin_right - 290
+    for label, values in sorted(series.items(), key=lambda item: int(item[0])):
+        color = colors.get(label, "#111827")
+        points = [(x_pos(index), y_pos(value)) for index, value in enumerate(values)]
+        if len(points) > 1:
+            draw.line(points, fill=color, width=3)
+        for x, y in points:
+            draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=color)
+        draw.line((legend_x, legend_y, legend_x + 22, legend_y), fill=color, width=3)
+        draw.text((legend_x + 30, legend_y - 8), f"prefix words = {label}", font=body_font, fill="#111111")
+        legend_y += 22
 
-    summaries: list[dict] = []
-    local_baseline_accuracy = None
+    draw_centered_text(margin_left + plot_width / 2, height - 18, "confidence threshold", body_font, "#111111")
 
-    for prefix_words in prefix_words_list:
-        for threshold in thresholds:
-            output_path = runs_dir / f"{args.subset}-p{prefix_words}-th{threshold:.2f}.json"
-            result = run_one(
-                input_path=args.input.resolve(),
-                subset=args.subset,
-                max_files=args.max_files,
-                threshold=threshold,
-                prefix_words=prefix_words,
-                left_context_sec=args.left_context_sec,
-                right_context_sec=args.right_context_sec,
-                min_duration_sec=args.min_duration_sec,
-                output_path=output_path,
-            )
-            summary = result["summary"]
-            local_accuracy = 1.0 - float(summary["avg_local_wer"])
-            dispatched_accuracy = 1.0 - float(summary["avg_dispatched_wer"])
-            local_baseline_accuracy = local_accuracy
-            summaries.append(
-                {
-                    "prefix_words": prefix_words,
-                    "threshold": threshold,
-                    "avg_local_wer": summary["avg_local_wer"],
-                    "avg_dispatched_wer": summary["avg_dispatched_wer"],
-                    "avg_wer_improvement": summary["avg_wer_improvement"],
-                    "local_accuracy": round(local_accuracy, 6),
-                    "dispatched_accuracy": round(dispatched_accuracy, 6),
-                    "total_dispatch_spans": summary["total_dispatch_spans"],
-                    "total_dispatch_audio_sec": summary["total_dispatch_audio_sec"],
-                    "result_json": str(output_path),
-                }
-            )
+    y_label_image = Image.new("RGBA", (40, 320), (255, 255, 255, 0))
+    y_draw = ImageDraw.Draw(y_label_image)
+    y_w, y_h = y_draw.textbbox((0, 0), y_label, font=body_font)[2:]
+    y_draw.text(((40 - y_w) / 2, (320 - y_h) / 2), y_label, font=body_font, fill="#111111")
+    rotated = y_label_image.rotate(90, expand=True)
+    image.paste(rotated, (10, int(margin_top + plot_height / 2 - rotated.size[1] / 2)), rotated)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(output_path)
+
+
+def build_grouped_series(payload: dict) -> tuple[list[float], list[int], list[dict], dict[str, list[float]], dict[str, list[float]], float]:
+    thresholds = [float(value) for value in payload["thresholds"]]
+    prefix_words_list = [int(value) for value in payload["prefix_words"]]
+    summaries = payload["summaries"]
+    local_baseline_accuracy = 1.0 - float(summaries[0]["avg_local_wer"]) if summaries else 0.0
 
     grouped_accuracy = {
         str(prefix_words): [
             next(
                 item["dispatched_accuracy"]
                 for item in summaries
-                if item["prefix_words"] == prefix_words and math.isclose(item["threshold"], threshold)
+                if int(item["prefix_words"]) == prefix_words and math.isclose(float(item["threshold"]), threshold)
             )
             for threshold in thresholds
         ]
@@ -256,46 +351,142 @@ def main() -> int:
             next(
                 item["avg_wer_improvement"]
                 for item in summaries
-                if item["prefix_words"] == prefix_words and math.isclose(item["threshold"], threshold)
+                if int(item["prefix_words"]) == prefix_words and math.isclose(float(item["threshold"]), threshold)
             )
             for threshold in thresholds
         ]
         for prefix_words in prefix_words_list
     }
+    return thresholds, prefix_words_list, summaries, grouped_accuracy, grouped_improvement, local_baseline_accuracy
 
-    payload = {
-        "input": str(args.input.resolve()),
-        "subset": args.subset,
-        "max_files": args.max_files,
-        "thresholds": thresholds,
-        "prefix_words": prefix_words_list,
-        "left_context_sec": args.left_context_sec,
-        "right_context_sec": args.right_context_sec,
-        "min_duration_sec": args.min_duration_sec,
-        "summaries": summaries,
-    }
-    save_json(output_dir / "summary.json", payload)
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Sweep dispatch thresholds and prefix lengths")
+    parser.add_argument("--input", type=Path)
+    parser.add_argument("--subset", default="dev-other")
+    parser.add_argument("--max-files", type=int, default=25)
+    parser.add_argument("--thresholds", default="0.2,0.25,0.3,0.35")
+    parser.add_argument("--prefix-words", default="1,3,5")
+    parser.add_argument("--left-context-sec", type=float, default=0.5)
+    parser.add_argument("--right-context-sec", type=float, default=0.25)
+    parser.add_argument("--min-duration-sec", type=float, default=0.25)
+    parser.add_argument(
+        "--summary-json",
+        type=Path,
+        help="Use an existing sweep summary to render plots without rerunning benchmarks",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=REPO_ROOT / "results" / "dispatch-sweep",
+    )
+    args = parser.parse_args()
+    output_dir = args.output_dir.resolve()
+    if args.summary_json is not None:
+        with open(args.summary_json, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    else:
+        if args.input is None:
+            raise SystemExit("--input is required unless --summary-json is provided")
+        thresholds = parse_csv_floats(args.thresholds)
+        prefix_words_list = parse_csv_ints(args.prefix_words)
+        runs_dir = output_dir / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+
+        summaries: list[dict] = []
+        for prefix_words in prefix_words_list:
+            for threshold in thresholds:
+                output_path = runs_dir / f"{args.subset}-p{prefix_words}-th{threshold:.2f}.json"
+                result = run_one(
+                    input_path=args.input.resolve(),
+                    subset=args.subset,
+                    max_files=args.max_files,
+                    threshold=threshold,
+                    prefix_words=prefix_words,
+                    left_context_sec=args.left_context_sec,
+                    right_context_sec=args.right_context_sec,
+                    min_duration_sec=args.min_duration_sec,
+                    output_path=output_path,
+                )
+                summary = result["summary"]
+                local_accuracy = 1.0 - float(summary["avg_local_wer"])
+                dispatched_accuracy = 1.0 - float(summary["avg_dispatched_wer"])
+                summaries.append(
+                    {
+                        "prefix_words": prefix_words,
+                        "threshold": threshold,
+                        "avg_local_wer": summary["avg_local_wer"],
+                        "avg_dispatched_wer": summary["avg_dispatched_wer"],
+                        "avg_wer_improvement": summary["avg_wer_improvement"],
+                        "local_accuracy": round(local_accuracy, 6),
+                        "dispatched_accuracy": round(dispatched_accuracy, 6),
+                        "total_dispatch_spans": summary["total_dispatch_spans"],
+                        "total_dispatch_audio_sec": summary["total_dispatch_audio_sec"],
+                        "result_json": str(output_path),
+                    }
+                )
+
+        payload = {
+            "input": str(args.input.resolve()),
+            "subset": args.subset,
+            "max_files": args.max_files,
+            "thresholds": thresholds,
+            "prefix_words": prefix_words_list,
+            "left_context_sec": args.left_context_sec,
+            "right_context_sec": args.right_context_sec,
+            "min_duration_sec": args.min_duration_sec,
+            "summaries": summaries,
+        }
+        save_json(output_dir / "summary.json", payload)
+
+    thresholds, prefix_words_list, summaries, grouped_accuracy, grouped_improvement, local_baseline_accuracy = build_grouped_series(payload)
+    subset = payload["subset"]
+    max_files = int(payload["max_files"])
+    baseline_label = f"local-only Whisper Tiny baseline ({local_baseline_accuracy:.3f} accuracy)"
 
     render_svg_plot(
-        title=f"{args.subset} dispatch accuracy sweep",
-        subtitle=f"{args.max_files} sampled files, conservative dispatch policy",
+        title=f"{subset} dispatch accuracy sweep",
+        subtitle=f"{max_files} sampled files, conservative dispatch policy",
         thresholds=thresholds,
         series=grouped_accuracy,
-        baseline=local_baseline_accuracy or 0.0,
+        baseline=local_baseline_accuracy,
+        baseline_label=baseline_label,
         y_label="accuracy (1 - WER)",
-        output_path=output_dir / "accuracy-vs-threshold.svg",
+        output_path=output_dir / "dispatch-accuracy-sweep.svg",
+    )
+    render_png_plot(
+        title=f"{subset} dispatch accuracy sweep",
+        subtitle=f"{max_files} sampled files, conservative dispatch policy",
+        thresholds=thresholds,
+        series=grouped_accuracy,
+        baseline=local_baseline_accuracy,
+        baseline_label=baseline_label,
+        y_label="accuracy (1 - WER)",
+        output_path=output_dir / "dispatch-accuracy-sweep.png",
     )
     render_svg_plot(
-        title=f"{args.subset} dispatch improvement sweep",
-        subtitle=f"{args.max_files} sampled files, conservative dispatch policy",
+        title=f"{subset} dispatch improvement sweep",
+        subtitle=f"{max_files} sampled files, conservative dispatch policy",
         thresholds=thresholds,
         series=grouped_improvement,
         baseline=0.0,
+        baseline_label="local-only baseline reference (0.000 improvement)",
         y_label="WER improvement over local baseline",
-        output_path=output_dir / "improvement-vs-threshold.svg",
+        output_path=output_dir / "dispatch-improvement-sweep.svg",
+    )
+    render_png_plot(
+        title=f"{subset} dispatch improvement sweep",
+        subtitle=f"{max_files} sampled files, conservative dispatch policy",
+        thresholds=thresholds,
+        series=grouped_improvement,
+        baseline=0.0,
+        baseline_label="local-only baseline reference (0.000 improvement)",
+        y_label="WER improvement over local baseline",
+        output_path=output_dir / "dispatch-improvement-sweep.png",
     )
 
-    print(f"Wrote sweep summary to {output_dir / 'summary.json'}")
+    if args.summary_json is None:
+        print(f"Wrote sweep summary to {output_dir / 'summary.json'}")
     print(f"Wrote plots to {output_dir}")
     return 0
 

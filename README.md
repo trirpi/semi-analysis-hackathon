@@ -15,13 +15,15 @@ I ran a threshold and prompt-prefix sweep on a 25-file sample from LibriSpeech `
 - best observed improvement: `0.013333` absolute WER
 - best settings in this sweep: `--threshold 0.25` or `--threshold 0.30` with `--prompt-prefix-words 1`
 
-Accuracy vs. threshold:
+The dashed baseline in the first plot is the plain local Whisper Tiny run with no OpenAI fallback.
 
-![Dispatch accuracy sweep](docs/images/dispatch-accuracy-sweep.svg)
+Accuracy vs. threshold, with the local-only baseline shown explicitly:
+
+![Dispatch accuracy sweep](docs/images/dispatch-accuracy-sweep.png)
 
 Improvement over the local baseline:
 
-![Dispatch improvement sweep](docs/images/dispatch-improvement-sweep.svg)
+![Dispatch improvement sweep](docs/images/dispatch-improvement-sweep.png)
 
 ## What It Does
 

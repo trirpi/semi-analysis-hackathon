@@ -6,10 +6,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from confidence_dispatch.dispatch import build_dispatched_transcript, collect_low_confidence_spans
+from confidence_dispatch.dispatch import (
+    _accept_remote_text,
+    build_dispatched_transcript,
+    collect_low_confidence_spans,
+    dispatch_analysis,
+    trailing_words,
+)
 
 
 class TestDispatchSpans(unittest.TestCase):
+    def test_trailing_words_returns_last_n_words(self):
+        self.assertEqual(trailing_words(" one two three four", 2), "three four")
+
     def test_collect_low_confidence_spans_merges_nearby_tokens(self):
         analysis = {
             "duration_sec": 4.0,
@@ -65,6 +74,45 @@ class TestDispatchSpans(unittest.TestCase):
 
         transcript = build_dispatched_transcript(analysis, dispatched)
         self.assertEqual(transcript, "hello accurate phrase world")
+
+    def test_dispatch_analysis_adds_prompt_prefix_text(self):
+        analysis = {
+            "audio": str(REPO_ROOT / "vendor" / "whisper" / "tests" / "jfk.flac"),
+            "text": "hello steady context uncertain token world",
+            "segments": [
+                {
+                    "id": 0,
+                    "token_details": [
+                        {"token_id": 1, "token_text": " hello", "start": 0.0, "end": 0.2, "probability": 0.99},
+                        {"token_id": 2, "token_text": " steady", "start": 0.2, "end": 0.4, "probability": 0.99},
+                        {"token_id": 3, "token_text": " context", "start": 0.4, "end": 0.6, "probability": 0.99},
+                        {"token_id": 4, "token_text": " uncertain", "start": 0.6, "end": 0.8, "probability": 0.4},
+                        {"token_id": 5, "token_text": " token", "start": 0.8, "end": 1.0, "probability": 0.4},
+                        {"token_id": 6, "token_text": " world", "start": 1.0, "end": 1.2, "probability": 0.99},
+                    ],
+                }
+            ],
+        }
+
+        report = dispatch_analysis(
+            analysis,
+            threshold=0.6,
+            prompt_prefix_words=2,
+            run_openai=False,
+        )
+
+        self.assertEqual(len(report["dispatch_spans"]), 1)
+        self.assertEqual(report["dispatch_spans"][0]["prompt_prefix_text"], "steady context")
+
+    def test_single_word_span_rejects_multiword_remote_replacement(self):
+        accepted = _accept_remote_text(
+            "through August.",
+            " Saru",
+            1,
+            "pass and my",
+            "Agostino explained. There",
+        )
+        self.assertEqual(accepted, "")
 
 
 if __name__ == "__main__":

@@ -149,10 +149,46 @@ def main() -> int:
         help="Add this much audio context around dispatched spans",
     )
     parser.add_argument(
+        "--left-context-sec",
+        type=float,
+        default=None,
+        help="Left-side audio context in seconds; defaults to --context-sec",
+    )
+    parser.add_argument(
+        "--right-context-sec",
+        type=float,
+        default=None,
+        help="Right-side audio context in seconds; defaults to --context-sec",
+    )
+    parser.add_argument(
         "--min-tokens",
         type=int,
         default=1,
         help="Minimum low-confidence token count for a dispatched span",
+    )
+    parser.add_argument(
+        "--min-words",
+        type=int,
+        default=1,
+        help="Minimum low-confidence word count for a dispatched span",
+    )
+    parser.add_argument(
+        "--min-duration-sec",
+        type=float,
+        default=0.0,
+        help="Minimum audio duration for a dispatched span",
+    )
+    parser.add_argument(
+        "--prompt-prefix-words",
+        type=int,
+        default=0,
+        help="Number of preceding words to pass as prompt context to OpenAI",
+    )
+    parser.add_argument(
+        "--following-context-words",
+        type=int,
+        default=3,
+        help="Number of following local words used to trim remote overlap",
     )
     parser.add_argument(
         "--max-files",
@@ -212,7 +248,13 @@ def main() -> int:
                 threshold=args.threshold,
                 merge_gap_sec=args.merge_gap_sec,
                 context_sec=args.context_sec,
+                left_context_sec=args.left_context_sec,
+                right_context_sec=args.right_context_sec,
                 min_tokens=args.min_tokens,
+                min_words=args.min_words,
+                min_duration_sec=args.min_duration_sec,
+                prompt_prefix_words=args.prompt_prefix_words,
+                following_context_words=args.following_context_words,
                 run_openai=args.run_openai,
                 openai_model=args.openai_model,
             )
@@ -254,7 +296,13 @@ def main() -> int:
         "threshold": args.threshold,
         "merge_gap_sec": args.merge_gap_sec,
         "context_sec": args.context_sec,
+        "left_context_sec": args.left_context_sec if args.left_context_sec is not None else args.context_sec,
+        "right_context_sec": args.right_context_sec if args.right_context_sec is not None else args.context_sec,
         "min_tokens": args.min_tokens,
+        "min_words": args.min_words,
+        "min_duration_sec": args.min_duration_sec,
+        "prompt_prefix_words": args.prompt_prefix_words,
+        "following_context_words": args.following_context_words,
         "run_openai": args.run_openai,
         "openai_model": args.openai_model,
         "max_files": args.max_files,

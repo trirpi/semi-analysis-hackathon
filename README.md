@@ -6,6 +6,23 @@ The goal is quality improvement, not speed optimization.
 
 ![Whisper token confidence visualization](docs/images/token-confidence-visualization.png)
 
+## Benchmark Sweep
+
+I ran a threshold and prompt-prefix sweep on a 25-file sample from LibriSpeech `dev-other` using the conservative dispatch policy.
+
+- local-only WER: `0.161951`
+- best dispatched WER: `0.148618`
+- best observed improvement: `0.013333` absolute WER
+- best settings in this sweep: `--threshold 0.25` or `--threshold 0.30` with `--prompt-prefix-words 1`
+
+Accuracy vs. threshold:
+
+![Dispatch accuracy sweep](docs/images/dispatch-accuracy-sweep.svg)
+
+Improvement over the local baseline:
+
+![Dispatch improvement sweep](docs/images/dispatch-improvement-sweep.svg)
+
 ## What It Does
 
 1. Run Whisper Tiny locally on CPU from a vendored `openai/whisper` source tree.
@@ -110,9 +127,12 @@ export OPENAI_API_KEY=...
 python scripts/dispatch_low_confidence.py \
   --analysis-json results/token-confidence/jfk-token-confidence.json \
   --threshold 0.6 \
+  --prompt-prefix-words 3 \
   --run-openai \
   --output results/dispatch-openai.json
 ```
+
+`--prompt-prefix-words` sends the previous `x` recognized words as text prompt context to the OpenAI fallback call.
 
 Current default fallback model:
 
@@ -154,6 +174,7 @@ python scripts/benchmark_librispeech_dispatch.py \
   --subset test-other \
   --max-files 25 \
   --threshold 0.6 \
+  --prompt-prefix-words 3 \
   --run-openai \
   --output results/test-other-openai.json
 ```
@@ -162,6 +183,7 @@ Recommended workflow:
 
 - start with `--max-files 10` to check cost and behavior
 - inspect the JSON output to see which spans were dispatched
+- compare `--prompt-prefix-words 0` vs `--prompt-prefix-words 3`
 - then increase the sample size or run the whole subset
 
 The benchmark output includes:

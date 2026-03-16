@@ -14,8 +14,10 @@ I ran a threshold and prompt-prefix sweep on a 25-file sample from LibriSpeech `
 - best dispatched WER: `0.148618`
 - best observed improvement: `0.013333` absolute WER
 - best settings in this sweep: `--threshold 0.25` or `--threshold 0.30` with `--prompt-prefix-words 1`
+- full-audio OpenAI WER on the same 25-file sample: `0.034962`
 
-The dashed baseline in the first plot is the plain local Whisper Tiny run with no OpenAI fallback.
+The gray dashed line is the plain local Whisper Tiny run with no OpenAI fallback.
+The purple dashed line is the result of sending the entire audio file through the OpenAI API, included as a reference comparison rather than a baseline.
 
 Accuracy vs. threshold, with the local-only baseline shown explicitly:
 

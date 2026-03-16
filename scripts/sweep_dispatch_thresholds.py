@@ -77,6 +77,7 @@ def build_plot_spec(
     thresholds: list[float],
     series: dict[str, list[float]],
     baseline: float,
+    extra_values: list[float] | None = None,
 ) -> dict:
     width = 1100
     height = 640
@@ -88,6 +89,8 @@ def build_plot_spec(
     plot_height = height - margin_top - margin_bottom
 
     all_values = [baseline]
+    if extra_values:
+        all_values.extend(extra_values)
     for values in series.values():
         all_values.extend(values)
     y_min = min(all_values)
@@ -129,12 +132,17 @@ def render_svg_plot(
     subtitle: str,
     thresholds: list[float],
     series: dict[str, list[float]],
-    baseline: float,
-    baseline_label: str,
+    references: list[dict],
     y_label: str,
     output_path: Path,
 ) -> None:
-    spec = build_plot_spec(thresholds=thresholds, series=series, baseline=baseline)
+    reference_values = [float(item["value"]) for item in references]
+    spec = build_plot_spec(
+        thresholds=thresholds,
+        series=series,
+        baseline=min(reference_values) if reference_values else 0.0,
+        extra_values=reference_values,
+    )
     width = spec["width"]
     height = spec["height"]
     margin_left = spec["margin_left"]
@@ -152,6 +160,7 @@ def render_svg_plot(
         "1": "#2563eb",
         "3": "#16a34a",
         "5": "#dc2626",
+        "7": "#f59e0b",
     }
 
     svg_parts = [
@@ -184,14 +193,17 @@ def render_svg_plot(
     svg_parts.append(f"<line class='axis' x1='{margin_left}' y1='{height - margin_bottom}' x2='{width - margin_right}' y2='{height - margin_bottom}' />")
     svg_parts.append(f"<line class='axis' x1='{margin_left}' y1='{margin_top}' x2='{margin_left}' y2='{height - margin_bottom}' />")
 
-    baseline_y = y_pos(baseline)
-    svg_parts.append(
-        f"<line x1='{margin_left}' y1='{baseline_y:.2f}' x2='{width - margin_right}' y2='{baseline_y:.2f}' "
-        "stroke='#6b7280' stroke-width='2' stroke-dasharray='8 6' />"
-    )
-    svg_parts.append(
-        f"<text class='legend' x='{width - margin_right - 8}' y='{baseline_y - 8:.2f}' text-anchor='end'>{baseline_label}</text>"
-    )
+    for reference in references:
+        reference_y = y_pos(float(reference["value"]))
+        reference_color = reference.get("color", "#6b7280")
+        reference_dash = reference.get("dasharray", "8 6")
+        svg_parts.append(
+            f"<line x1='{margin_left}' y1='{reference_y:.2f}' x2='{width - margin_right}' y2='{reference_y:.2f}' "
+            f"stroke='{reference_color}' stroke-width='2' stroke-dasharray='{reference_dash}' />"
+        )
+        svg_parts.append(
+            f"<text class='legend' x='{width - margin_right - 8}' y='{reference_y - 8:.2f}' text-anchor='end'>{reference['label']}</text>"
+        )
 
     legend_y = margin_top + 12
     legend_x = width - margin_right - 290
@@ -226,12 +238,17 @@ def render_png_plot(
     subtitle: str,
     thresholds: list[float],
     series: dict[str, list[float]],
-    baseline: float,
-    baseline_label: str,
+    references: list[dict],
     y_label: str,
     output_path: Path,
 ) -> None:
-    spec = build_plot_spec(thresholds=thresholds, series=series, baseline=baseline)
+    reference_values = [float(item["value"]) for item in references]
+    spec = build_plot_spec(
+        thresholds=thresholds,
+        series=series,
+        baseline=min(reference_values) if reference_values else 0.0,
+        extra_values=reference_values,
+    )
     width = spec["width"]
     height = spec["height"]
     margin_left = spec["margin_left"]
@@ -249,6 +266,7 @@ def render_png_plot(
         "1": "#2563eb",
         "3": "#16a34a",
         "5": "#dc2626",
+        "7": "#f59e0b",
     }
 
     image = Image.new("RGB", (width, height), "white")
@@ -293,15 +311,28 @@ def render_png_plot(
     draw.line((margin_left, height - margin_bottom, width - margin_right, height - margin_bottom), fill="#111827", width=2)
     draw.line((margin_left, margin_top, margin_left, height - margin_bottom), fill="#111827", width=2)
 
-    baseline_y = y_pos(baseline)
-    draw_dashed_line(
-        margin_left,
-        baseline_y,
-        width - margin_right,
-        baseline_y,
-        fill="#6b7280",
-    )
-    draw_right_aligned_text(width - margin_right - 8, baseline_y - 8, baseline_label, body_font, "#374151")
+    for reference in references:
+        reference_y = y_pos(float(reference["value"]))
+        reference_color = reference.get("color", "#6b7280")
+        dash_values = [int(part) for part in str(reference.get("dasharray", "8 6")).split()]
+        dash = dash_values[0] if dash_values else 8
+        gap = dash_values[1] if len(dash_values) > 1 else 6
+        draw_dashed_line(
+            margin_left,
+            reference_y,
+            width - margin_right,
+            reference_y,
+            fill=reference_color,
+            dash=dash,
+            gap=gap,
+        )
+        draw_right_aligned_text(
+            width - margin_right - 8,
+            reference_y - 8,
+            reference["label"],
+            body_font,
+            "#374151",
+        )
 
     legend_y = margin_top + 12
     legend_x = width - margin_right - 290
@@ -376,6 +407,11 @@ def main() -> int:
         help="Use an existing sweep summary to render plots without rerunning benchmarks",
     )
     parser.add_argument(
+        "--full-api-json",
+        type=Path,
+        help="Optional JSON benchmark for full-audio OpenAI transcription reference",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=REPO_ROOT / "results" / "dispatch-sweep",
@@ -439,18 +475,68 @@ def main() -> int:
         }
         save_json(output_dir / "summary.json", payload)
 
+    if args.full_api_json is not None:
+        with open(args.full_api_json, "r", encoding="utf-8") as handle:
+            full_api_payload = json.load(handle)
+        avg_full_api_wer = float(full_api_payload["summary"]["avg_full_api_wer"])
+        payload["full_api_reference"] = {
+            "avg_full_api_wer": round(avg_full_api_wer, 6),
+            "full_api_accuracy": round(1.0 - avg_full_api_wer, 6),
+            "local_minus_full_api_wer": 0.0,
+            "source_json": str(args.full_api_json.resolve()),
+        }
+
     thresholds, prefix_words_list, summaries, grouped_accuracy, grouped_improvement, local_baseline_accuracy = build_grouped_series(payload)
+    if payload.get("full_api_reference"):
+        payload["full_api_reference"]["local_minus_full_api_wer"] = round(
+            local_baseline_accuracy - (1.0 - float(payload["full_api_reference"]["avg_full_api_wer"])),
+            6,
+        )
     subset = payload["subset"]
     max_files = int(payload["max_files"])
-    baseline_label = f"local-only Whisper Tiny baseline ({local_baseline_accuracy:.3f} accuracy)"
+    accuracy_references = [
+        {
+            "label": f"local-only Whisper Tiny baseline ({local_baseline_accuracy:.3f} accuracy)",
+            "value": local_baseline_accuracy,
+            "color": "#6b7280",
+            "dasharray": "8 6",
+        }
+    ]
+    improvement_references = [
+        {
+            "label": "local-only baseline reference (0.000 improvement)",
+            "value": 0.0,
+            "color": "#6b7280",
+            "dasharray": "8 6",
+        }
+    ]
+    if payload.get("full_api_reference"):
+        full_api_wer = float(payload["full_api_reference"]["avg_full_api_wer"])
+        full_api_accuracy = 1.0 - full_api_wer
+        full_api_improvement = float(payload["full_api_reference"]["local_minus_full_api_wer"])
+        accuracy_references.append(
+            {
+                "label": f"full-audio OpenAI transcription ({full_api_accuracy:.3f} accuracy)",
+                "value": full_api_accuracy,
+                "color": "#7c3aed",
+                "dasharray": "12 6",
+            }
+        )
+        improvement_references.append(
+            {
+                "label": f"full-audio OpenAI transcription ({full_api_improvement:.3f} improvement)",
+                "value": full_api_improvement,
+                "color": "#7c3aed",
+                "dasharray": "12 6",
+            }
+        )
 
     render_svg_plot(
         title=f"{subset} dispatch accuracy sweep",
         subtitle=f"{max_files} sampled files, conservative dispatch policy",
         thresholds=thresholds,
         series=grouped_accuracy,
-        baseline=local_baseline_accuracy,
-        baseline_label=baseline_label,
+        references=accuracy_references,
         y_label="accuracy (1 - WER)",
         output_path=output_dir / "dispatch-accuracy-sweep.svg",
     )
@@ -459,8 +545,7 @@ def main() -> int:
         subtitle=f"{max_files} sampled files, conservative dispatch policy",
         thresholds=thresholds,
         series=grouped_accuracy,
-        baseline=local_baseline_accuracy,
-        baseline_label=baseline_label,
+        references=accuracy_references,
         y_label="accuracy (1 - WER)",
         output_path=output_dir / "dispatch-accuracy-sweep.png",
     )
@@ -469,8 +554,7 @@ def main() -> int:
         subtitle=f"{max_files} sampled files, conservative dispatch policy",
         thresholds=thresholds,
         series=grouped_improvement,
-        baseline=0.0,
-        baseline_label="local-only baseline reference (0.000 improvement)",
+        references=improvement_references,
         y_label="WER improvement over local baseline",
         output_path=output_dir / "dispatch-improvement-sweep.svg",
     )
@@ -479,8 +563,7 @@ def main() -> int:
         subtitle=f"{max_files} sampled files, conservative dispatch policy",
         thresholds=thresholds,
         series=grouped_improvement,
-        baseline=0.0,
-        baseline_label="local-only baseline reference (0.000 improvement)",
+        references=improvement_references,
         y_label="WER improvement over local baseline",
         output_path=output_dir / "dispatch-improvement-sweep.png",
     )
